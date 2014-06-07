@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 import traceback
 
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import get_cache, InvalidCacheBackendError
 import django
 
 from jinja2.ext import Extension
@@ -82,6 +82,10 @@ class CacheExtension(Extension):
             .. some expensive processing ..
         {% endcache %}
 
+    Optionally the cache to use may be specified like this:
+
+        {% cache ... , 'cache_name' %}
+
     Available by default (does not need to be loaded).
 
     Partly based on the ``FragmentCacheExtension`` from the Jinja2 docs.
@@ -95,6 +99,10 @@ class CacheExtension(Extension):
         expire_time = parser.parse_expression()
         fragment_name = parser.parse_expression()
         vary_on = []
+        cache_name = None
+
+        if parser.stream.skip_if('comma'):
+            cache_name = parser.parse_expression().value
 
         while not parser.stream.current.test('block_end'):
             vary_on.append(parser.parse_expression())
@@ -104,15 +112,26 @@ class CacheExtension(Extension):
         return nodes.CallBlock(
             self.call_method('_cache_support',
                              [expire_time, fragment_name,
-                              nodes.List(vary_on), nodes.Const(lineno)]),
+                              nodes.List(vary_on), nodes.Const(lineno), nodes.Const(cache_name)]),
             [], [], body).set_lineno(lineno)
 
-    def _cache_support(self, expire_time, fragm_name, vary_on, lineno, caller):
+    def _cache_support(self, expire_time, fragm_name, vary_on, lineno, cache_name, caller):
         try:
             expire_time = int(expire_time)
         except (ValueError, TypeError):
             raise TemplateSyntaxError('"%s" tag got a non-integer timeout '
                 'value: %r' % (list(self.tags)[0], expire_time), lineno)
+
+        if cache_name:
+            try:
+                cache = get_cache(cahe_name)
+            except InvalidCacheBackendError:
+                raise TemplateSyntaxError('Invalid cache name specified for cache tag: {}'.format(cache_name))
+        else:
+            try:
+                cache = get_cache('template_fragments')
+            except InvalidCacheBackendError:
+                cache = get_cache('default')
 
         cache_key = make_template_fragment_key(fragm_name, vary_on)
 
